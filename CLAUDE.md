@@ -44,6 +44,48 @@ purpose, and buries it.
 starts — and not in the middle of the work. Compaction mid-task summarises away the
 detail the task is currently made of.
 
+## Reporting
+
+Pick the report size by what happened, not by how long it took.
+
+**Small** — one place changed, no new component, no decision I did not ask for
+(padding, a rename, a typo, a flag flipped). One or two sentences. No template.
+
+    Padding on ProfileHeader is 16 now; nothing else touched.
+
+**Medium** — a feature or fix that adds behaviour, or anything where you decided
+something on your own. This shape:
+
+    Done: <feature or fix in one line>
+      - <capability 1>
+      - <capability 2>
+    Flow: <ComponentA -> ComponentB -> ComponentC>, <pattern used>
+    Decided on my own: <things not discussed that I chose, assumed or worked around>
+    Noticed: <findings unrelated to the task, one line each>
+
+Each section one to three lines. Omit an empty section rather than writing "none".
+
+**Large** — several independent parts (a feature spanning modules, a migration, a
+refactor plus a fix). One line naming the parts, then the medium shape once per part,
+then a single "Noticed" at the end. Do not merge parts: the point is that each part has
+its own "Decided on my own".
+
+**When unsure between small and medium, ask: did I decide anything?** If yes, medium.
+
+**"Decided on my own" is the section that matters most.** Anything not agreed goes
+there, however small — it is the input for `DECISIONS.md`.
+
+Nothing else, at any size: no restating the diff, no describing how the answer was
+found, no file contents "in case", no recap of earlier turns. Details, reasoning and
+evidence on request — "why", "show me", "what did you check" — and only then.
+
+**Between tool calls, say nothing** unless a decision is needed.
+
+Every line of output is re-read on every later turn, and output tokens cost several
+times what input does. A paragraph explaining what `git diff` already shows is paid for
+until `/clear`, and it buries the one line — an unagreed decision — that actually needs
+attention.
+
 ## Tests
 
 **Reproduce a defect with a failing test first, and prove it fails against the OLD
