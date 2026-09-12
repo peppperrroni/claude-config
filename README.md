@@ -37,8 +37,10 @@ it does not.
 ## 2. Repository layout
 
     CLAUDE.md                       Global guidance: reading files, documents of record,
-                                    context hygiene, tests, branches and commits.
-                                    A project's own CLAUDE.md overrides all of it.
+                                    context hygiene, output shape, tests, branches and
+                                    commits. A project's own CLAUDE.md overrides all of
+                                    it. Kept under 100 lines; a reason longer than one
+                                    line goes into README, not there.
 
     rules/                          Path-scoped rules. Each .md declares the globs it
                                     applies to and reaches the model only when a matching
@@ -53,8 +55,10 @@ it does not.
     skills/handoff/                 /handoff — write it at the end.
     skills/init-project/            /init-project — give a repository the state documents
                                     the other two expect.
-                                    All three are disable-model-invocation: they run when
-                                    I ask and not otherwise.
+                                    Those three are disable-model-invocation: they run
+                                    when I ask and not otherwise.
+    skills/explain/                 /explain — map how something in the project works.
+                                    The one skill the model may invoke itself.
 
     hooks/session-start.{ps1,sh}    SessionStart: background-pull this repository, then
                                     show the project's STATE.md.
@@ -329,9 +333,20 @@ A skill is a directory under `skills/` containing `SKILL.md`:
     <the steps>
 
 `disable-model-invocation: true` means the skill runs when I type `/<name>` and never
-because the model decided it was relevant. All three skills here set it: they read and
-write the documents of record, and none of that should happen as a side effect of
-something else.
+because the model decided it was relevant. `/resume`, `/handoff` and `/init-project` all
+set it: they read and write the documents of record, and none of that should happen as a
+side effect of something else.
+
+**`/explain` is the exception, deliberately.** It has no `disable-model-invocation`, so
+the model applies it whenever I ask how something works — which is how the question
+actually gets asked, never as `/explain`. The reason it is safe to let fire on its own is
+that it changes *the shape of an answer*, not the repository: it reads, draws a map, and
+writes nothing. Its `description` is therefore the working part of the file, since that
+is what the model matches against; it names the phrasings ("how does X work", "walk me
+through Y", "where does Z happen") rather than describing the skill to a human.
+
+The rule that follows: a skill that writes gets `disable-model-invocation`, a skill that
+only reads may earn its way without it.
 
 The installer adds skill directories one at a time, so whatever else is already in
 `~/.claude/skills` survives.
@@ -375,6 +390,34 @@ free one. Stop catches the session that is about to end with a dirty tree and no
 Both skills refuse to invent. `/resume` stops and says so when a project keeps no state
 documents; `/handoff` will not create documents the project never asked for; `/init-project`
 is how a project gets them, deliberately and once.
+
+### Reports, and how a decision reaches DECISIONS.md
+
+The global `CLAUDE.md` sizes every report by what happened rather than by effort, with
+one test: **did I decide anything?** If yes, at least medium. **Small** is one or two
+sentences for a change that decided nothing. **Medium** is `Done` / `Flow` /
+`Decided on my own` / `Noticed`, one to three lines each, empty sections dropped.
+**Large** names the independent parts and repeats the medium shape once per part, so each
+part keeps its own `Decided on my own` instead of being merged into a summary that hides
+them.
+
+`Decided on my own` is the section the rest exists to protect. It is where anything I did
+not agree to goes — an assumption, a workaround, a default chosen quietly — and `/handoff`
+reads it back: every such item still true in the final code is appended to `DECISIONS.md`
+as decision-and-why. Items reverted during the session are not recorded, because a
+decision that was replaced is not one the repository made.
+
+That is the whole loop. Decisions are made in the open during the session, survive
+`/clear` in the document rather than in the context, and the one line worth reading is not
+buried under a paragraph restating the diff.
+
+### /explain
+
+Asking how something works — "how does X work", "walk me through Y", "where does Z
+happen" — invokes `/explain` without typing it. It sends the exploring to a subagent and
+answers with a map under 30 lines: one sentence, a happy-path diagram, three to six
+anchored components, the rules that are not visible from the diagram, and any surprises.
+Depth is on request. See §7 for why it is the one model-invocable skill.
 
 **Why the state documents live in the project repository** and not in
 `~/.claude/projects/`: they are part of the project's history, not of my machine's. They
