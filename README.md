@@ -3,6 +3,9 @@
 My portable Claude Code layer: the guidance that is true regardless of which project I am
 in and which machine I am on.
 
+A new machine is three steps: **clone, run setup, paste one block.** After that the layer
+keeps itself current and nothing here needs running again by hand.
+
 ## 1. What this is
 
 Two trees, one of which is generated from the other.
@@ -16,16 +19,20 @@ it does not.
 
     ~/claude-config/                    ~/.claude/
       CLAUDE.md              ───────►     CLAUDE.md
-      rules/powershell.md    ───────►     rules/powershell.md
-      rules/ui-automation.md ───────►     rules/ui-automation.md
+      rules/*.md             ───────►     rules/*.md
       rules/README.txt       ───╳         (not installed: documentation, not a rule)
       skills/handoff/        ───────►     skills/handoff/
       skills/resume/         ───────►     skills/resume/
-      templates/             ───╳         (not installed: copied into a project by hand)
+      skills/init-project/   ───────►     skills/init-project/
+      hooks/*                ───────►     hooks/*
+      templates/             ───╳         (not installed: /init-project copies these)
+      .githooks/             ───╳         (not installed: runs inside this repo)
                              ───╳         settings.json        (never written)
                              ───╳         settings.local.json  (never written)
                                           skills/<anything else> survives untouched
-                                          .claude-config-manifest  (written by setup)
+                                          .claude-config-manifest  written by setup
+                                          .claude-config-source    written by setup
+                                          .claude-config-state/    written by the hooks
 
 ## 2. Repository layout
 
@@ -41,20 +48,30 @@ it does not.
     rules/ui-automation.md          Synthesise keystrokes with keybd_event/SendInput,
                                     never SendKeys.
 
-    skills/handoff/                 /handoff — record the state of the project at the end
+    skills/resume/                  /resume — read the project's state back at the start
                                     of a session.
-    skills/resume/                  /resume — read that state back at the start of one.
-                                    Both are disable-model-invocation: they run when I
-                                    ask and not otherwise.
+    skills/handoff/                 /handoff — write it at the end.
+    skills/init-project/            /init-project — give a repository the state documents
+                                    the other two expect.
+                                    All three are disable-model-invocation: they run when
+                                    I ask and not otherwise.
 
-    templates/project/              Skeleton for a new project. Not installed.
+    hooks/session-start.{ps1,sh}    SessionStart: background-pull this repository, then
+                                    show the project's STATE.md.
+    hooks/stop.{ps1,sh}             Stop: remind once per session that the tree is dirty
+                                    and /handoff has not run.
+    hooks/pull.{ps1,sh}             The timed, silent pull. Launched detached.
+    hooks/handoff-done.{ps1,sh}     Marks that /handoff ran, which silences the reminder.
+
+    templates/project/              Skeleton for a new project. Copied by /init-project.
     templates/project/CLAUDE.md     Project guidance skeleton.
     templates/project/STATE.md      Where work stopped, what is next.
     templates/project/DECISIONS.md  What was decided and why.
     templates/project/FOLLOW-UPS.md Known defects and deferred work.
-    templates/project/.claude/      SessionStart hook that prints STATE.md, in both a
-                                    PowerShell and a bash variant, plus a
-                                    settings.json.example showing how to wire it.
+    templates/project/.gitignore    Ignores .claude/settings.local.json.
+
+    .githooks/post-merge            Re-runs setup after a pull. Wired by setup with
+    .githooks/post-merge.ps1        core.hooksPath, in this repository only.
 
     setup.ps1, setup.sh             Installers. See below.
     .gitattributes                  Line endings: .sh is LF, .ps1 is CRLF, .md is LF.
@@ -64,7 +81,7 @@ it does not.
 
     git clone https://github.com/peppperrroni/claude-config.git ~/claude-config
 
-**Windows — use `setup.ps1`, never `setup.sh`.** See §10 for why.
+**Windows — use `setup.ps1`, never `setup.sh`.** See §11 for why.
 
     powershell -NoProfile -ExecutionPolicy Bypass -File $HOME\claude-config\setup.ps1
 
@@ -82,7 +99,7 @@ the whole run.
 | Mode | When | Consequence |
 |---|---|---|
 | `link` | the probe succeeded | editing the repository edits the live config immediately |
-| `copy` | the probe failed, or `-Copy` / `--copy` was passed | the live config is a snapshot; **re-run setup after every pull or edit** |
+| `copy` | the probe failed, or `-Copy` / `--copy` was passed | the live config is a snapshot, refreshed by the post-merge hook (§5) |
 
 On Windows a symlink needs Administrator or Developer Mode (Settings → System → For
 developers → Developer Mode). Git Bash additionally needs
@@ -95,7 +112,7 @@ Windows for the same reason.*
 
 **A note on the "verified" notes.** They say what was tested and on what kind of machine,
 never on which machine: no home directory paths, usernames, kernel builds or hostnames.
-That is §9's rule — what I decided, never where I ran it — applied to this file, which is
+That is §10's rule — what I decided, never where I ran it — applied to this file, which is
 otherwise the easiest place in the repository to leak it.
 
 ### Options
@@ -109,7 +126,9 @@ otherwise the easiest place in the repository to leak it.
 ### CLAUDE_HOME
 
 Both scripts install into `$CLAUDE_HOME` when it is set, and into `~/.claude` otherwise.
-That is the supported way to try a change without touching the live configuration:
+That is the supported way to try a change without touching the live configuration, and
+the hooks honour it too — each resolves `~/.claude` from its own location rather than
+from `$HOME`, so a sandboxed install's hooks read that sandbox's state:
 
     $env:CLAUDE_HOME = "$env:TEMP\claude-sandbox"      # PowerShell
     CLAUDE_HOME=/tmp/claude-sandbox ./setup.sh          # sh
@@ -137,10 +156,10 @@ two trees mirror each other.
 
 Prune considers **only** paths in that manifest, and only those that no longer exist in
 the source. A skill in `~/.claude/skills` that this repository did not install is not in
-the manifest and is therefore not a candidate — on this machine there are twelve
-junctions there pointing into `~/.agents/skills`, and they survive. `settings.json`,
-`settings.local.json` and `.credentials.json` are refused outright even if a hand-edited
-manifest names them, and a path that resolves outside the destination is skipped.
+the manifest and is therefore not a candidate — on a machine with skills linked in from
+elsewhere, they survive. `settings.json`, `settings.local.json`, `.credentials.json` and
+the installer's own two dotfiles are refused outright even if a hand-edited manifest
+names them, and a path that resolves outside the destination is skipped.
 
 The manifest grows and shrinks, and it is worth being exact about when, because "union of
 everything ever installed" and "prune works" cannot both be true.
@@ -158,54 +177,110 @@ is nothing left to clean and no reason to keep reporting it.
 so the next run reports it again. That is the point: the flag is a decision, and until it
 is made the report should not go quiet.
 
-*Verified in a `CLAUDE_HOME` sandbox, four consecutive runs: install; delete
-`rules/ui-automation.md` from the source and run again — reported stale, nothing changed;
-run with `-Prune` — that one file deleted and nothing else; **run a fourth time — silent,
-and the entry is gone from the manifest.** Separately, deleting `skills/handoff` and
-pruning removed that directory while an unrelated pre-existing skill, `settings.json` and
-`settings.local.json` were untouched.*
+*Verified in a `CLAUDE_HOME` sandbox, four consecutive runs: install; delete a rule from
+the source and run again — reported stale, nothing changed; run with `-Prune` — that one
+file deleted and nothing else; **run a fourth time — silent, and the entry is gone from
+the manifest.** Separately, deleting a whole skill directory and pruning removed it while
+an unrelated pre-existing skill, `settings.json` and `settings.local.json` were
+untouched.*
 
-### settings.json is never written
+## 4. Machine setup — the one paste
 
-Neither script touches `~/.claude/settings.json` or `settings.local.json`. Those files
-hold live state — enabled plugins, MCP servers, permission grants accumulated over months
-— and a merge performed by a script is a good way to lose some of it quietly. The
-installer prints the keys worth having and leaves the editing to me:
+Setup never writes `settings.json`. It ends by **printing** a block, with this machine's
+absolute paths already filled in:
 
-    "tui": "fullscreen",
-    "autoUpdatesChannel": "latest"
+    {
+      "hooks": {
+        "SessionStart": [
+          { "hooks": [ { "type": "command", "command": "<...>/hooks/session-start.ps1" } ] }
+        ],
+        "Stop": [
+          { "hooks": [ { "type": "command", "command": "<...>/hooks/stop.ps1" } ] }
+        ]
+      }
+    }
 
-## 4. Updating after a pull
+Paste it into `~/.claude/settings.json`, merging the `hooks` key if the file already has
+one. That is the only manual configuration on a new machine, and it is the last one.
+
+**Why printed and not written.** `settings.json` holds live state — enabled plugins, MCP
+servers, permission grants accumulated over months — and the file is rewritten by the CLI
+itself. A merge performed by a script is a good way to lose some of it quietly, and to
+collide with a program that does not know about git.
+
+### What the two hooks do
+
+**SessionStart** starts a detached, timed pull of this repository, then puts the current
+project's `STATE.md` in front of the fresh context. With no `STATE.md` it says
+`No state documents in this project; /init-project creates them.` Outside a git
+repository it says nothing at all — an ad-hoc session in a scratch directory is not a
+project.
+
+**Stop** fires at the end of every turn. If the tree is dirty it reminds, **once per
+session**, that `/handoff` has not run. It never blocks and never writes to the
+repository.
+
+Three stamps under `~/.claude/.claude-config-state/` make the throttle work: `.session`
+written by SessionStart, `.handoff` written by `/handoff` as its last step, `.nagged`
+written by Stop itself. The reminder appears only when neither `.handoff` nor `.nagged`
+is newer than `.session`.
+
+**Wire both or neither.** With no `.session` stamp the Stop hook exits silently rather
+than guessing — so wiring only the Stop half produces nothing at all, instead of a
+reminder after every single message.
+
+### Why the pull is in the background
+
+Measured on this machine, warm network: `git pull --ff-only` against this repository took
+**1.09–1.25 s**. That is paid at the start of every session, to deliver a change that is
+usually not there. So SessionStart launches `hooks/pull.*` detached and does not wait; the
+3-second hard timeout lives inside that child, because detached is not the same as
+abandoned.
+
+The pulled content therefore lands for the *next* session in copy mode, and immediately in
+link mode. That is the trade for not paying a second per session.
+
+`--ff-only` is what makes a silent background pull safe: it declines rather than merging,
+so an unpushed local commit is never resolved behind my back. Offline, mid-conflict, no
+git, no repository, a credentials prompt — every one of those is a silent no-op.
+
+*Verified on Windows: the hook emits correct JSON with `STATE.md` present, the one-line
+hint with it absent, and nothing outside a git repository; the whole hook takes ~350 ms,
+of which ~285 ms is PowerShell's own startup, and it stays that fast with the source path
+pointing at a directory that does not exist. The Stop hook was exercised through all seven
+states — clean, dirty, repeat-in-session, new session, after `handoff-done`, and after
+that. The shell versions produce byte-identical decisions under WSL bash 5.2.*
+
+***Unverified on every platform:*** *whether Claude Code consumes the SessionStart JSON
+and the Stop output at all. That is what §11's one-step test is for, and until it is run
+this whole section describes scripts that are known to work and a wiring that is not.*
+
+## 5. Updating after a pull
 
     cd ~/claude-config && git pull
 
-**Link mode:** edits to existing files need nothing — the links already point at the new
-content. Re-run the installer when the pull **added** a rule or skill, since a new file
-has no link yet, and when it **deleted** one, since the link outlives its target.
+**Nothing else.** Setup sets `git config core.hooksPath .githooks` in this repository, and
+`.githooks/post-merge` re-runs the installer with `--prune` after every merge. In copy
+mode that refreshes the copies; in link mode everything is already current and the run
+reports `unchanged`, except for files the pull *added*, which have no link yet.
 
-**Copy mode:** the pull changed nothing that Claude Code can see. Re-run the installer
-every time:
+`--prune` is why the deletion case works too: a pull that removed a rule takes its
+installed copy, or its now-dangling symlink, with it.
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File $HOME\claude-config\setup.ps1
+*Verified end to end on Windows, through a real remote: a second clone added a rule and
+pushed it; `git pull` in the first clone ran the installer and the rule appeared in the
+destination. The same clone then deleted the rule and pushed; the next `git pull` reported
+`pruned` and it was gone.*
 
-**Either mode, when the pull deleted a rule or a skill, add `-Prune` / `--prune`.** The
-leftover differs — copy mode leaves a stale copy that is still valid and still loaded,
-link mode leaves a symlink pointing at nothing — but neither disappears on its own, and
-what Claude Code does when it meets a dangling link in `~/.claude/rules` is not something
-this repository has established. Do not find out.
+The trade: `core.hooksPath` bypasses `.git/hooks` in this repository, and every pull now
+prints the installer's full output. Both are visible and neither is reversible by
+accident — `git config --unset core.hooksPath` undoes it.
 
-The run names the stale entries, so the habit is: run once without the flag, read the
-report, run again with it.
+If setup reports that it could **not** set `core.hooksPath` — the source is not a git
+repository, or git is unavailable — then the old rule applies and the installer has to be
+re-run by hand after every pull.
 
-*Dangling-link handling is asymmetric in how well it is tested. `setup.sh` tests `-L` as
-well as `-e`, which is required, because `-e` follows the link and answers false for a
-broken one — verified under WSL bash. `setup.ps1` falls back to listing the parent
-directory when `Test-Path` says no, and pruning a dangling **junction** is verified; a
-real dangling **symlink** could not be tested here, since creating one needs the same
-Developer Mode that is missing in the first place. The fallback is correct either way,
-but it is inference, not a test.*
-
-## 5. Adding a rule
+## 6. Adding a rule
 
 A rule is an `.md` file in `rules/` whose frontmatter names the globs it applies to:
 
@@ -239,9 +314,9 @@ Three things to keep in mind:
 `rules/README.txt` is `.txt` on purpose: every `.md` in that directory is loaded as a
 rule, and notes addressed to a human reader are not rules.
 
-Then re-run the installer — a new file has no link or copy yet.
+Commit and push it; the next machine picks it up on its next pull.
 
-## 6. Adding a skill
+## 7. Adding a skill
 
 A skill is a directory under `skills/` containing `SKILL.md`:
 
@@ -254,79 +329,76 @@ A skill is a directory under `skills/` containing `SKILL.md`:
     <the steps>
 
 `disable-model-invocation: true` means the skill runs when I type `/<name>` and never
-because the model decided it was relevant. Both skills here set it: `/handoff` and
-`/resume` write and read the documents of record, and neither should happen as a side
-effect of something else.
+because the model decided it was relevant. All three skills here set it: they read and
+write the documents of record, and none of that should happen as a side effect of
+something else.
 
 The installer adds skill directories one at a time, so whatever else is already in
 `~/.claude/skills` survives.
 
-## 7. Starting a new project from the template
+## 8. Starting a new project
 
-Templates are not installed. Copy them:
+In the repository, at its root:
 
-    # Windows
-    Copy-Item -Recurse $HOME\claude-config\templates\project\* <new-project>\ -Force
+    /init-project
 
-    # macOS / Linux
-    cp -R ~/claude-config/templates/project/. <new-project>/
+It copies `templates/project/` into the repository — `CLAUDE.md`, `STATE.md`,
+`DECISIONS.md`, `FOLLOW-UPS.md`, `.gitignore` — **overwriting nothing**, reports what it
+created and what it skipped, and if it created `CLAUDE.md` asks the three questions needed
+to fill it in: what this is, the build/run/test commands, and the one command that decides
+whether the tree is green. Where a `.gitignore` already exists it appends the one line
+instead of replacing the file. It shows `git status` and does not commit.
 
-Then:
+It finds the templates by reading `~/.claude/.claude-config-source`, which setup wrote
+with the path of the clone.
 
-1. Fill in `CLAUDE.md` — what it is, the build/run/test commands, the traps. Name the one
-   command that decides whether the tree is green; the branch workflow refers to it.
-2. Leave `STATE.md`, `DECISIONS.md` and `FOLLOW-UPS.md` as skeletons. `/handoff` fills
-   them in. Each says at the top what belongs in it and what does not — that header is
-   the point of the file and should survive.
-3. Wire the SessionStart hook, which prints `STATE.md` into a fresh context. Open
-   `.claude/settings.json.example`, take the `_windows` or the `_posix` object (see §10),
-   and put its contents into `.claude/settings.local.json` — local, because the
-   invocation is a fact about the machine and not about the project.
-4. Add `.claude/settings.local.json` to the project's `.gitignore`.
+**No hook wiring.** There used to be a per-project `.claude/` with its own SessionStart
+hook and a `settings.json.example` carrying two invocation variants. That is gone: the
+hooks are global now (§4), they find the project from the working directory, and a new
+project inherits them by existing. One wiring decision per machine instead of one per
+repository.
 
-Both hook scripts locate the project from their own path rather than the working
-directory, exit silently when there is no `STATE.md`, and emit JSON built by a real
-serialiser rather than by hand.
-
-*Verified: both scripts produce valid, correctly escaped JSON for content containing
-quotes, backslashes, tabs, CRLF and non-ASCII — `session-start.ps1` under Windows
-PowerShell 5.1, `session-start.sh` under GNU bash 5.2. **Unverified on every platform:**
-whether Claude Code then acts on that JSON. See §10 for the one-step test.*
-
-## 8. Session workflow
+## 9. Session workflow
 
     /resume   →   work   →   /handoff   →   /clear
 
 `/resume` reads `CLAUDE.md`, the state documents, `git status` and `git log -10`, says
 where the last session stopped and what is open, proposes one next step, and changes
 nothing. `/handoff` does the reverse at the end: it updates the documents to match what
-the session actually did, shows the diff, and does not commit.
+the session actually did, shows the diff, does not commit, and marks itself done so the
+Stop reminder goes quiet.
 
-Both refuse to invent. `/resume` stops and says so when a project keeps no state
-documents; `/handoff` will not create documents the project never asked for.
+The hooks cover the edges. SessionStart has already put `STATE.md` in front of the context
+before `/resume` is typed — `/resume` is the deliberate, fuller read, the hook is the
+free one. Stop catches the session that is about to end with a dirty tree and no handoff.
+
+Both skills refuse to invent. `/resume` stops and says so when a project keeps no state
+documents; `/handoff` will not create documents the project never asked for; `/init-project`
+is how a project gets them, deliberately and once.
 
 **Why the state documents live in the project repository** and not in
 `~/.claude/projects/`: they are part of the project's history, not of my machine's. They
 belong in the same commit as the behaviour they describe, they should reach anyone who
 clones the repository, and they should survive this laptop. `~/.claude/projects/` is
 keyed by absolute path, is never backed up, and is excluded from this repository for the
-same reason as everything else in §9.
+same reason as everything else in §10.
 
-## 9. What is deliberately excluded, and why
+## 10. What is deliberately excluded, and why
 
 | Not in this repo | Why |
 |---|---|
-| `~/.claude/settings.json` | Enabled plugins and marketplaces are per-machine facts, and the file is rewritten by the CLI itself. Publishing it invites a merge conflict with a program that does not know about git. |
+| `~/.claude/settings.json` | Enabled plugins and marketplaces are per-machine facts, and the file is rewritten by the CLI itself. Publishing it invites a merge conflict with a program that does not know about git. The hook block is printed by setup instead, with this machine's paths. |
 | `~/.claude/settings.local.json` | Permission grants. Mine include absolute paths under my home directory, and a grant copied onto another machine authorises something nobody reviewed there. Permissions should be granted where they are used. |
 | `~/.claude/.credentials.json` | Authentication tokens. Never belongs in a repository, private or otherwise. |
+| `~/.claude/.claude-config-source`, `.claude-config-state/` | Where this clone happens to live, and which repositories were touched when. Machine facts, written by setup and the hooks, prune refuses to touch them. |
 | `~/.claude/projects/` | Per-project memory and transcripts, keyed by absolute path. Full of product decisions that mean nothing outside their repository. |
 | `~/.claude/sessions/`, `history.jsonl`, `shell-snapshots/`, `file-history/` | Verbatim session history: source code, file contents, anything pasted into a prompt. The single largest disclosure risk in `~/.claude`. |
-| `~/.claude/skills/` as a directory | Symlinks into `~/.agents/skills`, resolved against absolute paths that exist on one machine. The installer adds skills individually for this reason. |
+| `~/.claude/skills/` as a directory | Symlinks into another tree, resolved against absolute paths that exist on one machine. The installer adds skills individually for this reason. |
 
 The rule behind the table: this repository holds what I decided, never what I ran, where
 I ran it, or what let me in.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 ### `bash` on Windows is WSL, and `setup.sh` will lie to you
 
@@ -347,59 +419,80 @@ success, and changes nothing that the Windows Claude Code reads. **On Windows us
 Check before trusting a shell: `Get-Command bash` for the path, and `bash -c 'echo $HOME;
 uname -sr'` — a Linux answer means WSL.
 
-### Symlinks were refused
+### The hooks do nothing
 
-The installer says so and copies instead. Enable Developer Mode (Settings → System → For
-developers) or run elevated, then re-run `setup.ps1` once; it will replace the copies with
-links. Until then the live config is a snapshot — re-run the installer after every pull
-or edit.
+**Status: unverified on Windows and on macOS.** The hook scripts are verified to behave
+correctly when run directly (§4); what has not been tested on either platform is whether
+Claude Code invokes them and acts on their output.
 
-### `$'\r': command not found`
-
-`setup.sh` was checked out with CRLF line endings; bash reads the carriage return as part
-of the shebang. `.gitattributes` pins `*.sh` to LF to prevent it. If it happens anyway,
-the clone predates that file: `git rm --cached -r . && git reset --hard` renormalises.
-
-### `pwsh` is not recognised
-
-PowerShell 7 is a separate install and is absent here — `Get-Command pwsh` finds nothing
-on this machine. Use `powershell` (Windows PowerShell 5.1), which is always present; the
-flags are identical. This is what `rules/powershell.md` exists to say.
-
-### The SessionStart hook does nothing
-
-**Status: unverified on Windows and on macOS.** The hook scripts are verified to produce
-valid JSON (§7); what has not been tested on either platform is whether Claude Code picks
-that JSON up.
-
-The one-step test: wire the hook per §7, run `/clear`, and see whether `STATE.md` comes
-back. Nothing appearing is the failure — a malformed or misrouted hook is ignored
-silently rather than reported.
+**The one-step test.** Wire the block from §4, open a session in a project that has a
+`STATE.md`, and see whether it comes back. Nothing appearing is the failure — a malformed
+or misrouted hook is ignored silently rather than reported.
 
 If nothing appears, in order:
 
-1. **Wrong variant.** *Unverified, and not a fact about anything in this repository:* the
-   rule carried forward from the previous README is that Claude Code runs a hook through
-   `$SHELL -c` when `SHELL` is set, `%COMSPEC% /d /s /c` on Windows otherwise, and
-   `/bin/sh -c` otherwise — which would mean `_windows` applies when started from
-   PowerShell, `cmd` or a shortcut, and `_posix` when started from Git Bash or WSL, on
-   Windows too. Nobody here has confirmed that against the documentation or the source.
-   Treat it as the first hypothesis, not the answer: **just try the other variant**,
-   which costs one `/clear` and settles it regardless of who is right.
-2. **Relative path.** The command in the example is relative to the project directory.
-   Try an absolute one.
-3. **Wrong file.** It belongs in `.claude/settings.local.json` in the *project*, not in
-   `~/.claude/settings.json`, which nothing here writes.
-4. **The script itself.** Run it by hand; it should print one line of JSON. Silence means
-   it found no `STATE.md`.
+1. **Run the script by hand,** from inside the project:
+
+       powershell -NoProfile -ExecutionPolicy Bypass -File $HOME\.claude\hooks\session-start.ps1
+
+   It should print one line of JSON. If it does, the script is fine and the wiring is not.
+
+2. **Wrong shell for the command string.** *Unverified, and a claim about Claude Code
+   rather than about anything here:* a hook command is said to run through `$SHELL -c`
+   when `SHELL` is set, `%COMSPEC% /d /s /c` on Windows otherwise, and `/bin/sh -c`
+   otherwise. If that holds, a session started from Git Bash or WSL on Windows wants the
+   `bash .../session-start.sh` form rather than the `powershell ... .ps1` one. Both scripts
+   are installed on both platforms precisely so the other one can be tried; swapping the
+   command costs one restart and settles it.
+
+3. **Wrong file.** The block belongs in `~/.claude/settings.json`. Nothing here writes it,
+   so a typo there is invisible until the hook fails to fire.
+
+4. **Silence is also correct.** Outside a git repository the SessionStart hook prints
+   nothing, by design. Test inside a repository.
+
+### The Stop reminder never appears
+
+Check in this order: is the tree actually dirty (`git status --porcelain`); was the
+SessionStart hook wired too, and did it write `~/.claude/.claude-config-state/<key>.session`;
+has it already reminded this session (`<key>.nagged` newer than `<key>.session`); did
+`/handoff` already run (`<key>.handoff` newer than `<key>.session`).
+
+A missing `.session` stamp means silence by design — see §4.
+
+### The config is not updating itself
+
+`git -C ~/claude-config config --get core.hooksPath` should print `.githooks`. If it
+prints nothing, setup could not set it, and §5's automatic re-install is not happening —
+re-run setup by hand after each pull until it can.
+
+For the background pull, check `~/.claude/.claude-config-source` holds the path of the
+clone. A stale path there is silent by design: the pull is a convenience, not a
+correctness requirement, and a hook that complained about it would be worse than one that
+did not.
+
+### `$'\r': command not found`
+
+`setup.sh` or a hook was checked out with CRLF line endings; bash reads the carriage
+return as part of the shebang. `.gitattributes` pins `*.sh` to LF to prevent it. If it
+happens anyway, the clone predates that file: `git rm --cached -r . && git reset --hard`
+renormalises.
+
+### `pwsh` is not recognised
+
+PowerShell 7 is a separate install and is absent on this machine — `Get-Command pwsh`
+finds nothing. Use `powershell` (Windows PowerShell 5.1), which is always present; the
+flags are identical. This is what `rules/powershell.md` exists to say.
 
 ### macOS is unverified
 
-`setup.sh` has been syntax-checked (`bash -n`, GNU bash 5.2, clean) but **never run to
-completion on macOS**, whose `/bin/bash` is 3.2 and whose `sed` and `diff` are BSD. The
-constructs that matter were chosen with that in mind — `${ARR[@]+"${ARR[@]}"}` for empty
-arrays under `set -u`, `sed` rather than `awk` `gsub` for JSON escaping — but chosen with
-it in mind is not the same as tested.
+Every `.sh` here is syntax-checked (`bash -n`, GNU bash 5.2, clean) and the hooks were
+exercised under WSL bash, which is Linux and **not** macOS: `/bin/bash` there is 3.2, and
+`sed`, `diff` and `tr` are BSD. The constructs that matter were chosen with that in mind —
+`${ARR[@]+"${ARR[@]}"}` for empty arrays under `set -u`, `sed` rather than `awk` `gsub`
+for JSON escaping, a poll loop rather than `timeout`, which is coreutils and absent on
+BSD, and `shasum` as the fallback for `sha256sum` — but chosen with it in mind is not the
+same as tested.
 
 Treat the first macOS run as the test, against a scratch destination:
 
@@ -417,5 +510,10 @@ Run 5 is the one that matters and the one that is easiest to skip. If it reports
 entry as stale again, prune removed the file but not the record, and every later run will
 keep reporting something that no longer exists.
 
-Then check that `$CLAUDE_HOME/settings.json` was never created, and delete the scratch
+Then, from inside a project with a `STATE.md`:
+
+    bash $CLAUDE_HOME/hooks/session-start.sh     # one line of JSON
+    bash $CLAUDE_HOME/hooks/stop.sh              # silent on a clean tree
+
+Finally check that `$CLAUDE_HOME/settings.json` was never created, and delete the scratch
 directory.
