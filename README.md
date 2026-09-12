@@ -248,16 +248,35 @@ link mode. That is the trade for not paying a second per session.
 so an unpushed local commit is never resolved behind my back. Offline, mid-conflict, no
 git, no repository, a credentials prompt — every one of those is a silent no-op.
 
-*Verified on Windows: the hook emits correct JSON with `STATE.md` present, the one-line
-hint with it absent, and nothing outside a git repository; the whole hook takes ~350 ms,
-of which ~285 ms is PowerShell's own startup, and it stays that fast with the source path
-pointing at a directory that does not exist. The Stop hook was exercised through all seven
-states — clean, dirty, repeat-in-session, new session, after `handoff-done`, and after
-that. The shell versions produce byte-identical decisions under WSL bash 5.2.*
+### What each hook writes to stdout, and why they differ
 
-***Unverified on every platform:*** *whether Claude Code consumes the SessionStart JSON
-and the Stop output at all. That is what §11's one-step test is for, and until it is run
-this whole section describes scripts that are known to work and a wiring that is not.*
+Per the hooks reference — https://code.claude.com/docs/en/hooks — plain-text stdout from
+an exit-0 hook becomes context Claude can act on for exactly four events:
+`UserPromptSubmit`, `UserPromptExpansion`, `SessionStart` and `PostModelSwitch`.
+
+**SessionStart is on that list, so it prints plain text.** No JSON envelope, and with it
+went the `sed`/`awk` escaping `session-start.sh` used to carry, which was the most
+fragile code in this repository. The one hazard is that stdout *is* parsed as JSON when
+it starts with `{` and ends with `}`; the header line `STATE.md of this project,
+verbatim:` guarantees that can never happen, whatever `STATE.md` holds.
+
+**Stop is not on that list**, so its stdout would go to the debug log and nobody would
+ever see it. It emits `{"systemMessage": "..."}` instead, which is the documented way to
+put a line in front of the user. An earlier version of this repository printed the
+reminder as bare text; it could not have worked, and would have looked like bad wiring.
+
+*Verified on Windows: the hook prints `STATE.md` verbatim when present, the one-line hint
+when absent, and nothing outside a git repository; the whole hook takes ~350 ms, of which
+~285 ms is PowerShell's own startup, and it stays that fast with the source path pointing
+at a directory that does not exist. The Stop hook was exercised through all seven states —
+clean, dirty, repeat-in-session, new session, after `handoff-done`, and after that — and
+its output parses as JSON. The shell versions produce byte-identical decisions under both
+Git Bash 5.2 and WSL bash 5.2.*
+
+***Unverified on Windows and on macOS:*** *whether Claude Code invokes these hooks and
+acts on their output at all. The output contracts above are taken from the documentation,
+not from an observed session. Until §11's one-step test is run, this section describes
+scripts that are known to work and a wiring that is not.*
 
 ## 5. Updating after a pull
 
@@ -478,15 +497,20 @@ If nothing appears, in order:
 
        powershell -NoProfile -ExecutionPolicy Bypass -File $HOME\.claude\hooks\session-start.ps1
 
-   It should print one line of JSON. If it does, the script is fine and the wiring is not.
+   It should print `STATE.md` verbatim. If it does, the script is fine and the wiring is
+   not.
 
-2. **Wrong shell for the command string.** *Unverified, and a claim about Claude Code
-   rather than about anything here:* a hook command is said to run through `$SHELL -c`
-   when `SHELL` is set, `%COMSPEC% /d /s /c` on Windows otherwise, and `/bin/sh -c`
-   otherwise. If that holds, a session started from Git Bash or WSL on Windows wants the
-   `bash .../session-start.sh` form rather than the `powershell ... .ps1` one. Both scripts
-   are installed on both platforms precisely so the other one can be tried; swapping the
-   command costs one restart and settles it.
+2. **Wrong shell for the command string.** Per the hooks reference, a shell-form hook
+   command runs under `sh -c` on macOS and Linux, **Git Bash on Windows**, and PowerShell
+   only when Git Bash is unavailable. An earlier version of this file guessed at `$SHELL`
+   and `%COMSPEC%`; that guess was wrong, and this replaces it.
+
+   *Verified here only that Git Bash exists at `C:\Program Files\Git\bin\bash.exe` and
+   that `$HOME` inside it is the Windows home, so `~/.claude` resolves correctly — which
+   is what makes the `.sh` form a real alternative on Windows and not a WSL trap.* If the
+   `powershell ... .ps1` command does not fire, swap it for
+   `bash "/c/Users/<user>/.claude/hooks/session-start.sh"`. Both scripts are installed on
+   both platforms precisely so the other one can be tried.
 
 3. **Wrong file.** The block belongs in `~/.claude/settings.json`. Nothing here writes it,
    so a typo there is invisible until the hook fails to fire.

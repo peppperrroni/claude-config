@@ -64,7 +64,16 @@ try {
 
     Set-Content -LiteralPath $nagged -Value (Get-Date -Format 'o') -Encoding UTF8
 
-    Write-Output 'Uncommitted changes in this repository, and /handoff has not run this session. Run /handoff before /clear, or the reasoning goes with the context.'
+    # systemMessage, not bare stdout. Per the hooks reference, plain-text stdout from an
+    # exit-0 hook becomes context Claude can act on for exactly four events --
+    # UserPromptSubmit, UserPromptExpansion, SessionStart, PostModelSwitch -- and Stop is
+    # not one of them: there it goes to the debug log and nobody ever sees it. A JSON
+    # systemMessage is the documented way to put a line in front of the user.
+    # https://code.claude.com/docs/en/hooks
+    $payload = @{
+        systemMessage = 'Uncommitted changes here, and /handoff has not run this session. Run /handoff before /clear, or the reasoning goes with the context.'
+    }
+    $payload | ConvertTo-Json -Depth 3 -Compress
 } catch { }
 
 exit 0

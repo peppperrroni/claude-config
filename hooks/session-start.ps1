@@ -87,21 +87,18 @@ try {
         $text = Get-Content -LiteralPath $state -Raw -Encoding UTF8
     }
 
+    # Plain text, not JSON. Per the hooks reference, SessionStart is one of the four
+    # events where plain-text stdout from an exit-0 hook becomes context Claude can act
+    # on, so the whole JSON envelope -- and every escaping bug it can carry -- is
+    # unnecessary here. https://code.claude.com/docs/en/hooks
+    #
+    # The one hazard is that stdout IS parsed as JSON when it starts with { and ends with
+    # }. The header line below guarantees it never starts with {, whatever STATE.md holds.
     if ([string]::IsNullOrWhiteSpace($text)) {
-        $context = 'No state documents in this project; /init-project creates them.'
+        Write-Output 'No state documents in this project; /init-project creates them.'
     } else {
-        $context = "STATE.md of this project, verbatim:`n`n$text"
+        Write-Output "STATE.md of this project, verbatim:`n`n$text"
     }
-
-    # ConvertTo-Json does the escaping. Hand-rolling it is how a stray quote in STATE.md
-    # turns into a hook that emits malformed JSON and is silently ignored.
-    $payload = @{
-        hookSpecificOutput = @{
-            hookEventName     = 'SessionStart'
-            additionalContext = $context
-        }
-    }
-    $payload | ConvertTo-Json -Depth 5 -Compress
 } catch { }
 
 exit 0

@@ -65,25 +65,19 @@ mkdir -p "$state_dir" 2>/dev/null && \
 
 state="$root/STATE.md"
 
-emit() {  # <already-escaped context>
-  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$1"
-}
-
+# Plain text, not JSON. Per the hooks reference, SessionStart is one of the four events
+# where plain-text stdout from an exit-0 hook becomes context Claude can act on, so the
+# JSON envelope is unnecessary -- and with it goes the sed/awk escaping this script used
+# to carry, which was the most fragile thing in the repository.
+# https://code.claude.com/docs/en/hooks
+#
+# The one hazard is that stdout IS parsed as JSON when it starts with { and ends with }.
+# The header line below guarantees it never starts with {, whatever STATE.md holds.
 if [ ! -f "$state" ] || [ ! -s "$state" ]; then
-  emit 'No state documents in this project; /init-project creates them.'
+  printf '%s\n' 'No state documents in this project; /init-project creates them.'
   exit 0
 fi
 
-# JSON-escape without depending on jq, which is not installed everywhere.
-#
-# sed for the backslash and the quote, in that order -- escaping the quote first would
-# then have its own backslash escaped again. awk only folds the newlines, and only by
-# printing a literal, because gsub() re-interprets backslashes in its replacement and the
-# number needed differs between awk implementations.
-tab="$(printf '\t')"
-escaped="$(tr -d '\r' < "$state" \
-  | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/$tab/\\\\t/g" \
-  | awk 'BEGIN { ORS = "" } { print (NR > 1 ? "\\n" : "") $0 }')"
-
-emit "STATE.md of this project, verbatim:\\n\\n$escaped"
+printf '%s\n\n' 'STATE.md of this project, verbatim:'
+tr -d '\r' < "$state"
 exit 0

@@ -51,5 +51,14 @@ if [ -f "$nagged" ]  && [ "$nagged"  -nt "$session" ]; then exit 0; fi
 
 date > "$nagged" 2>/dev/null
 
-printf '%s\n' 'Uncommitted changes in this repository, and /handoff has not run this session. Run /handoff before /clear, or the reasoning goes with the context.'
+# systemMessage, not bare stdout. Per the hooks reference, plain-text stdout from an
+# exit-0 hook becomes context Claude can act on for exactly four events --
+# UserPromptSubmit, UserPromptExpansion, SessionStart, PostModelSwitch -- and Stop is not
+# one of them: there it goes to the debug log and nobody ever sees it. A JSON
+# systemMessage is the documented way to put a line in front of the user.
+# https://code.claude.com/docs/en/hooks
+#
+# The message is a fixed literal with no quote or backslash in it, so it needs no
+# escaping -- which is why this one can be a printf and session-start.sh cannot.
+printf '%s\n' '{"systemMessage":"Uncommitted changes here, and /handoff has not run this session. Run /handoff before /clear, or the reasoning goes with the context."}'
 exit 0
