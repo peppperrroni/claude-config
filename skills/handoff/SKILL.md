@@ -42,11 +42,29 @@ Only if the way the project runs, or what counts as verified, actually changed.
 
 Only if a defect was found or closed.
 
-## 6. Show the diff
+## 6. Record what was decided without being asked
+
+Scan this session's reports for **"Decided on my own"** items — the section the global
+`CLAUDE.md` requires on every medium and large report. Each one is a decision that was
+made rather than agreed, which is exactly what `DECISIONS.md` exists for.
+
+An item is recorded when it is **still true in the final code**, and as "decision + why",
+not as a description of the code.
+
+Two exclusions, both of which override the instinct to be thorough:
+
+  * **Reverted during the session — not recorded.** A decision that was replaced is not
+    a decision the repository made; the last one standing is.
+  * **Already in `DECISIONS.md` — not recorded again.** Append only what is new.
+
+This does not relax the rule below. An item that was reported but never actually landed
+in the code did not happen, and does not go in.
+
+## 7. Show the diff
 
 Show the diff of the documents. Do not commit.
 
-## 7. Record that this ran
+## 8. Record that this ran
 
     # Windows
     powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\.claude\hooks\handoff-done.ps1"
