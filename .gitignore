@@ -1,2 +1,8 @@
 *.bak-*
 .DS_Store
+
+# Permission grants, with absolute paths from one machine. Ignored globally here
+# too (~/.config/git/ignore), but a global ignore travels with the machine and
+# not with the clone -- so it is stated in the repository as well.
+.claude/settings.local.json
+**/.claude/settings.local.json

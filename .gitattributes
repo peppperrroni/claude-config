@@ -6,3 +6,8 @@
 
 # PowerShell is happiest with CRLF on Windows and does not care elsewhere.
 *.ps1 text eol=crlf
+
+# Markdown is read by the model and by editors on every platform, and nothing
+# here parses it with a CR-sensitive tool. Pinning LF keeps a Windows checkout
+# byte-identical to a macOS one, so a diff never turns into a line-ending diff.
+*.md  text eol=lf

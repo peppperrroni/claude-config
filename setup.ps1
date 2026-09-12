@@ -5,10 +5,18 @@
   A symlink on Windows needs Administrator or Developer Mode; when it is refused
   this script copies instead and says so.
 
-  Usage:  powershell -NoProfile -ExecutionPolicy Bypass -File setup.ps1 [-Copy]
+  Usage:  powershell -NoProfile -ExecutionPolicy Bypass -File setup.ps1 [-Copy] [-Prune]
+
+    -Copy   install copies instead of symlinks. Copies do not track edits to this
+            repository -- re-run setup.ps1 after pulling.
+    -Prune  delete entries this installer wrote earlier that no longer exist in the
+            source. Without it, stale entries are only reported.
+
+  Installs into $env:CLAUDE_HOME if set, otherwise ~/.claude.
+  Never writes settings.json.
 #>
 [CmdletBinding()]
-param([switch]$Copy)
+param([switch]$Copy, [switch]$Prune)
 
 $ErrorActionPreference = 'Stop'
 
@@ -22,6 +30,14 @@ function Add-Note([string]$Text) { [void]$report.Add($Text) }
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $dest 'rules')  | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $dest 'skills') | Out-Null
+
+$dest = (Get-Item -LiteralPath $dest -Force).FullName
+$manifestPath = Join-Path $dest '.claude-config-manifest'
+
+# Paths that prune must refuse even if a hand-edited manifest names them. Nothing
+# here is ever installed, so a manifest entry naming one is corruption, not a record.
+$protected = @('settings.json', 'settings.local.json', '.credentials.json',
+               '.claude-config-manifest')
 
 # Find out once whether this account may create symlinks, rather than discovering
 # it separately for every path and reporting a mix.
@@ -101,17 +117,114 @@ function Install-Path([string]$Source, [string]$Target) {
     }
 }
 
-Install-Path (Join-Path $src 'CLAUDE.md') (Join-Path $dest 'CLAUDE.md')
+# ---------------------------------------------------------------------------
+# Manifest. Entries are paths relative to $dest, forward-slashed, and identical
+# to the path relative to $src -- the two trees mirror each other, so one entry
+# locates both. setup.sh reads and writes the same file, hence forward slashes,
+# LF, and no BOM.
+# ---------------------------------------------------------------------------
+
+function Test-SafeEntry([string]$Entry) {
+    if ([string]::IsNullOrWhiteSpace($Entry)) { return $false }
+    if ($Entry -match '^[/\\]') { return $false }        # absolute
+    if ($Entry -match '^[A-Za-z]:') { return $false }     # drive-qualified
+    if (($Entry -split '/') -contains '..') { return $false }
+    if ($protected -contains $Entry) { return $false }
+    return $true
+}
+
+function Read-Manifest {
+    if (-not (Test-Path -LiteralPath $manifestPath)) { return @() }
+    return @(Get-Content -LiteralPath $manifestPath |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ -ne '' -and -not $_.StartsWith('#') })
+}
+
+function Write-Manifest([string[]]$Entries) {
+    $lines = @('# Written by claude-config setup. -Prune / --prune reads this to find',
+               '# entries that no longer exist in the source. Do not edit by hand.')
+    $lines += @($Entries | Sort-Object -Unique)
+    $text = ($lines -join "`n") + "`n"
+    [System.IO.File]::WriteAllText($manifestPath, $text,
+        (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Remove-Installed([string]$Target) {
+    $item = Get-Item -LiteralPath $Target -Force
+    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        # Delete the link, never through it. Remove-Item -Recurse on a directory
+        # symlink or junction can empty the *target* in Windows PowerShell;
+        # Directory.Delete($path, $false) removes only the reparse point.
+        if ($item.PSIsContainer) { [System.IO.Directory]::Delete($Target, $false) }
+        else { [System.IO.File]::Delete($Target) }
+    } elseif ($item.PSIsContainer) {
+        Remove-Item -LiteralPath $Target -Recurse -Force
+    } else {
+        Remove-Item -LiteralPath $Target -Force
+    }
+}
+
+$installedEntries = New-Object System.Collections.ArrayList
+
+function Install-Entry([string]$Relative) {
+    $rel = $Relative.Replace('/', '\')
+    Install-Path (Join-Path $src $rel) (Join-Path $dest $rel)
+    [void]$installedEntries.Add($Relative)
+}
+
+Install-Entry 'CLAUDE.md'
 
 # Only *.md -- rules/README.txt is documentation for a human and is not a rule.
 Get-ChildItem -LiteralPath (Join-Path $src 'rules') -Filter '*.md' -File | ForEach-Object {
-    Install-Path $_.FullName (Join-Path (Join-Path $dest 'rules') $_.Name)
+    Install-Entry ('rules/' + $_.Name)
 }
 
 # One directory at a time: anything else already in ~/.claude/skills survives.
 Get-ChildItem -LiteralPath (Join-Path $src 'skills') -Directory | ForEach-Object {
-    Install-Path $_.FullName (Join-Path (Join-Path $dest 'skills') $_.Name)
+    Install-Entry ('skills/' + $_.Name)
 }
+
+# ---------------------------------------------------------------------------
+# Stale entries. The manifest is the union of what was installed before and what
+# was installed just now: rewriting it with only the current set would erase the
+# record of the very entries prune exists to find.
+# ---------------------------------------------------------------------------
+
+$tracked = @(@(Read-Manifest) + @($installedEntries.ToArray()) |
+             Where-Object { Test-SafeEntry $_ } | Sort-Object -Unique)
+
+$keep  = New-Object System.Collections.ArrayList
+$stale = New-Object System.Collections.ArrayList
+
+foreach ($entry in $tracked) {
+    $rel = $entry.Replace('/', '\')
+    if (Test-Path -LiteralPath (Join-Path $src $rel)) { [void]$keep.Add($entry); continue }
+
+    $target = Join-Path $dest $rel
+    # Already gone: nothing to clean, and no reason to keep reporting it.
+    if (-not (Test-Path -LiteralPath $target)) { continue }
+
+    # Never act outside $dest, whatever the manifest says.
+    $full = [System.IO.Path]::GetFullPath($target)
+    if (-not $full.StartsWith($dest.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        Add-Note "  skipped     $entry  (resolves outside $dest)"
+        continue
+    }
+    [void]$stale.Add($entry)
+}
+
+foreach ($entry in $stale) {
+    $target = Join-Path $dest $entry.Replace('/', '\')
+    if ($Prune) {
+        Remove-Installed $target
+        Add-Note "  pruned      $target"
+    } else {
+        [void]$keep.Add($entry)
+        Add-Note "  stale       $target  (gone from source; -Prune removes it)"
+    }
+}
+
+Write-Manifest $keep.ToArray()
 
 Write-Output ''
 Write-Output "Installed into $dest (mode: $mode)"
@@ -126,9 +239,17 @@ if ($symlinksUnavailable) {
     Write-Output 'A copy does not track edits to this repository -- re-run setup.ps1 after pulling.'
 }
 
+if ($stale.Count -gt 0 -and -not $Prune) {
+    Write-Output ''
+    Write-Output 'Stale entries above were installed by an earlier run and are gone from the'
+    Write-Output 'source. Re-run with -Prune to delete them. Nothing outside the manifest is'
+    Write-Output 'ever considered, so skills linked here from elsewhere are not at risk.'
+}
+
 Write-Output ''
 Write-Output 'Not installed:'
 Write-Output '  rules/README.txt   documentation, not a rule -- a .md file there would load as one'
+Write-Output '  templates/         copied into a new project by hand; see README'
 Write-Output ''
 Write-Output 'settings.json was not touched, and this script will never touch it: it holds live'
 Write-Output 'state -- enabled plugins, MCP servers, permission grants -- that a script has no'
