@@ -1,0 +1,4 @@
+# Permission grants and any other machine-local Claude Code settings. These carry
+# absolute paths from one machine, and a grant copied onto another authorises something
+# nobody reviewed there.
+.claude/settings.local.json
