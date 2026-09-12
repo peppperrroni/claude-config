@@ -1,0 +1,54 @@
+{
+  "_README": [
+    "Not loaded by anything. Copy ONE of the two objects below into",
+    ".claude/settings.local.json (not settings.json: the invocation is a fact about",
+    "the machine, not about the project) and drop the leading underscore key.",
+    "",
+    "Which one: Claude Code runs a hook command through $SHELL -c when SHELL is set,",
+    "otherwise %COMSPEC% /d /s /c on Windows, otherwise /bin/sh -c. Started from",
+    "PowerShell, cmd or a shortcut, SHELL is unset and _windows applies. Started from",
+    "Git Bash or WSL, SHELL is set and _posix applies -- on Windows too.",
+    "",
+    "Both call a script FILE rather than inlining an echo. That is deliberate: an",
+    "inline command carrying JSON has to survive the shell's quoting, and cmd.exe",
+    "keeps the double quotes that sh strips. A path to a script carries no quotes to",
+    "get wrong.",
+    "",
+    "The command is relative to the project directory. If the hook never fires, an",
+    "absolute path is the first thing to try.",
+    "",
+    "UNVERIFIED until you test it on this machine: add the block, run /clear, and see",
+    "whether STATE.md comes back. Nothing appears means the hook is not firing -- a",
+    "malformed hook is ignored silently, it does not report an error."
+  ],
+
+  "_windows": {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .claude\\hooks\\session-start.ps1"
+            }
+          ]
+        }
+      ]
+    }
+  },
+
+  "_posix": {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "bash .claude/hooks/session-start.sh"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
