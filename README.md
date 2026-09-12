@@ -89,8 +89,14 @@ developers → Developer Mode). Git Bash additionally needs
 `MSYS=winsymlinks:nativestrict`; without it `ln -s` returns success and silently produces
 a copy, which is why `setup.sh` checks `[ -L ]` as well as the exit status.
 
-*Verified on this machine (Windows 11, 2026-09-12): Developer Mode off, shell not
-elevated, so the probe fails and the installer reports `mode: copy`.*
+*Verified on Windows 11 with Developer Mode off and an unelevated shell: the probe fails
+and the installer reports `mode: copy`. Link mode has not been exercised end to end on
+Windows for the same reason.*
+
+**A note on the "verified" notes.** They say what was tested and on what kind of machine,
+never on which machine: no home directory paths, usernames, kernel builds or hostnames.
+That is §9's rule — what I decided, never where I ran it — applied to this file, which is
+otherwise the easiest place in the repository to leak it.
 
 ### Options
 
@@ -110,7 +116,7 @@ That is the supported way to try a change without touching the live configuratio
 
 ### Reading the output
 
-    Installed into C:\Users\viohn\.claude (mode: copy)
+    Installed into C:\Users\<user>\.claude (mode: copy)
 
       unchanged   ...\CLAUDE.md  (copy)      already correct; nothing done
       link        ...\rules\x.md  ->  ...    a new symlink was created
@@ -136,16 +142,27 @@ junctions there pointing into `~/.agents/skills`, and they survive. `settings.js
 `settings.local.json` and `.credentials.json` are refused outright even if a hand-edited
 manifest names them, and a path that resolves outside the destination is skipped.
 
-The manifest is the **union** of what was installed before and what was installed just
-now. Rewriting it with only the current set would erase the record of exactly the entries
-prune exists to find.
+The manifest grows and shrinks, and it is worth being exact about when, because "union of
+everything ever installed" and "prune works" cannot both be true.
 
-Without `-Prune` / `--prune`, stale entries are reported and left alone.
+**An install adds.** The manifest is rewritten as the union of what it already held and
+what was just installed. Rewriting it with only the current set is the obvious
+implementation and is wrong: it would erase the record of exactly the entries prune exists
+to find, one run before prune could act on them.
 
-*Verified in a `CLAUDE_HOME` sandbox: removing `rules/ui-automation.md` from the source
-made the next run report it as stale and change nothing; the run after that with `-Prune`
-deleted that one file and nothing else; removing `skills/handoff` and pruning deleted
-that directory while a pre-existing unrelated skill, `settings.json` and
+**Two things remove.** A pruned entry is dropped in the same run that deletes it. So is an
+entry whose destination is already gone — pruned earlier, or deleted by hand — since there
+is nothing left to clean and no reason to keep reporting it.
+
+**Nothing else does.** Without `-Prune` / `--prune` a stale entry is reported and *kept*,
+so the next run reports it again. That is the point: the flag is a decision, and until it
+is made the report should not go quiet.
+
+*Verified in a `CLAUDE_HOME` sandbox, four consecutive runs: install; delete
+`rules/ui-automation.md` from the source and run again — reported stale, nothing changed;
+run with `-Prune` — that one file deleted and nothing else; **run a fourth time — silent,
+and the entry is gone from the manifest.** Separately, deleting `skills/handoff` and
+pruning removed that directory while an unrelated pre-existing skill, `settings.json` and
 `settings.local.json` were untouched.*
 
 ### settings.json is never written
@@ -162,16 +179,31 @@ installer prints the keys worth having and leaves the editing to me:
 
     cd ~/claude-config && git pull
 
-**Link mode:** nothing more to do. The links already point at the new content. Re-run the
-installer only when a rule or skill was *added*, since a new file has no link yet.
+**Link mode:** edits to existing files need nothing — the links already point at the new
+content. Re-run the installer when the pull **added** a rule or skill, since a new file
+has no link yet, and when it **deleted** one, since the link outlives its target.
 
-**Copy mode:** the pull changed nothing that Claude Code can see. Re-run the installer:
+**Copy mode:** the pull changed nothing that Claude Code can see. Re-run the installer
+every time:
 
     powershell -NoProfile -ExecutionPolicy Bypass -File $HOME\claude-config\setup.ps1
 
-Add `-Prune` / `--prune` when the pull deleted a rule or a skill; without it the old copy
-stays in `~/.claude` and keeps being loaded. The run tells you which entries are stale, so
-the safe habit is to run once without the flag, read the report, and run again with it.
+**Either mode, when the pull deleted a rule or a skill, add `-Prune` / `--prune`.** The
+leftover differs — copy mode leaves a stale copy that is still valid and still loaded,
+link mode leaves a symlink pointing at nothing — but neither disappears on its own, and
+what Claude Code does when it meets a dangling link in `~/.claude/rules` is not something
+this repository has established. Do not find out.
+
+The run names the stale entries, so the habit is: run once without the flag, read the
+report, run again with it.
+
+*Dangling-link handling is asymmetric in how well it is tested. `setup.sh` tests `-L` as
+well as `-e`, which is required, because `-e` follows the link and answers false for a
+broken one — verified under WSL bash. `setup.ps1` falls back to listing the parent
+directory when `Test-Path` says no, and pruning a dangling **junction** is verified; a
+real dangling **symlink** could not be tested here, since creating one needs the same
+Developer Mode that is missing in the first place. The fallback is correct either way,
+but it is inference, not a test.*
 
 ## 5. Adding a rule
 
@@ -258,7 +290,7 @@ serialiser rather than by hand.
 
 *Verified: both scripts produce valid, correctly escaped JSON for content containing
 quotes, backslashes, tabs, CRLF and non-ASCII — `session-start.ps1` under Windows
-PowerShell 5.1, `session-start.sh` under bash 5.2.21. **Unverified on every platform:**
+PowerShell 5.1, `session-start.sh` under GNU bash 5.2. **Unverified on every platform:**
 whether Claude Code then acts on that JSON. See §10 for the one-step test.*
 
 ## 8. Session workflow
@@ -301,17 +333,19 @@ I ran it, or what let me in.
     PS> Get-Command bash
 
     Name        : bash.exe
+    CommandType : Application
     Source      : C:\Windows\system32\bash.exe
-    Version     : 10.0.26100.9278
 
-That is not Git Bash. It is the WSL launcher, and inside it:
+That is not Git Bash. `C:\Windows\system32\bash.exe` is the WSL launcher, and inside it
+`$HOME` is a Linux home under `/home/`, on a WSL2 kernel — a different filesystem
+entirely.
 
-    HOME=/home/viohneq
-    Linux 6.6.87.2-microsoft-standard-WSL2
+So `bash setup.sh` installs into `~/.claude` **inside the WSL distribution**, reports
+success, and changes nothing that the Windows Claude Code reads. **On Windows use
+`setup.ps1` only.**
 
-So `bash setup.sh` on this machine installs into `/home/viohneq/.claude` **inside the
-Ubuntu WSL distribution**, reports success, and changes nothing that the Windows Claude
-Code reads. **On Windows use `setup.ps1` only.**
+Check before trusting a shell: `Get-Command bash` for the path, and `bash -c 'echo $HOME;
+uname -sr'` — a Linux answer means WSL.
 
 ### Symlinks were refused
 
@@ -344,10 +378,14 @@ silently rather than reported.
 
 If nothing appears, in order:
 
-1. **Wrong variant.** Claude Code runs a hook through `$SHELL -c` when `SHELL` is set,
-   otherwise `%COMSPEC% /d /s /c` on Windows, otherwise `/bin/sh -c`. Started from
-   PowerShell, `cmd` or a shortcut, `SHELL` is unset and `_windows` applies; started from
-   Git Bash or WSL, `SHELL` is set and `_posix` applies — on Windows too.
+1. **Wrong variant.** *Unverified, and not a fact about anything in this repository:* the
+   rule carried forward from the previous README is that Claude Code runs a hook through
+   `$SHELL -c` when `SHELL` is set, `%COMSPEC% /d /s /c` on Windows otherwise, and
+   `/bin/sh -c` otherwise — which would mean `_windows` applies when started from
+   PowerShell, `cmd` or a shortcut, and `_posix` when started from Git Bash or WSL, on
+   Windows too. Nobody here has confirmed that against the documentation or the source.
+   Treat it as the first hypothesis, not the answer: **just try the other variant**,
+   which costs one `/clear` and settles it regardless of who is right.
 2. **Relative path.** The command in the example is relative to the project directory.
    Try an absolute one.
 3. **Wrong file.** It belongs in `.claude/settings.local.json` in the *project*, not in
@@ -357,9 +395,27 @@ If nothing appears, in order:
 
 ### macOS is unverified
 
-`setup.sh` has been syntax-checked (`bash -n`, GNU bash 5.2.21, clean) but **never run to
+`setup.sh` has been syntax-checked (`bash -n`, GNU bash 5.2, clean) but **never run to
 completion on macOS**, whose `/bin/bash` is 3.2 and whose `sed` and `diff` are BSD. The
 constructs that matter were chosen with that in mind — `${ARR[@]+"${ARR[@]}"}` for empty
 arrays under `set -u`, `sed` rather than `awk` `gsub` for JSON escaping — but chosen with
-it in mind is not the same as tested. Treat the first macOS run as a test, with
-`CLAUDE_HOME` pointed at a scratch directory.
+it in mind is not the same as tested.
+
+Treat the first macOS run as the test, against a scratch destination:
+
+    export CLAUDE_HOME=/tmp/claude-sandbox
+
+    ./setup.sh                      # 1. installs
+    ./setup.sh                      # 2. must be all `unchanged`, no backups
+
+    rm rules/ui-automation.md       # (in a throwaway copy of the repo)
+    ./setup.sh                      # 3. reports it stale, changes nothing
+    ./setup.sh --prune              # 4. deletes exactly that file
+    ./setup.sh                      # 5. SILENT — the entry left the manifest
+
+Run 5 is the one that matters and the one that is easiest to skip. If it reports the
+entry as stale again, prune removed the file but not the record, and every later run will
+keep reporting something that no longer exists.
+
+Then check that `$CLAUDE_HOME/settings.json` was never created, and delete the scratch
+directory.

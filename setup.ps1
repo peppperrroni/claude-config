@@ -149,8 +149,28 @@ function Write-Manifest([string[]]$Entries) {
         (New-Object System.Text.UTF8Encoding($false)))
 }
 
+# Test-Path follows a symlink, so it answers $false for one whose target is gone --
+# and a dangling link is exactly what a pull that deleted a rule leaves behind in link
+# mode. Falling back to a listing of the parent directory sees the name itself.
+# (Verified here only for a junction, where Test-Path already answers $true; creating a
+# real symlink to test needs Developer Mode. The fallback is correct either way.)
+function Test-PathOrLink([string]$Path) {
+    if (Test-Path -LiteralPath $Path) { return $true }
+    $parent = Split-Path -Parent $Path
+    if (-not $parent -or -not (Test-Path -LiteralPath $parent)) { return $false }
+    $leaf = Split-Path -Leaf $Path
+    return (@(Get-ChildItem -LiteralPath $parent -Force |
+              Where-Object { $_.Name -eq $leaf }).Count -gt 0)
+}
+
 function Remove-Installed([string]$Target) {
-    $item = Get-Item -LiteralPath $Target -Force
+    $item = $null
+    try { $item = Get-Item -LiteralPath $Target -Force } catch { }
+    if ($null -eq $item) {
+        # A dangling link Get-Item will not open. Delete the name, whichever kind it is.
+        try { [System.IO.File]::Delete($Target) } catch { [System.IO.Directory]::Delete($Target, $false) }
+        return
+    }
     if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
         # Delete the link, never through it. Remove-Item -Recurse on a directory
         # symlink or junction can empty the *target* in Windows PowerShell;
@@ -201,8 +221,10 @@ foreach ($entry in $tracked) {
     if (Test-Path -LiteralPath (Join-Path $src $rel)) { [void]$keep.Add($entry); continue }
 
     $target = Join-Path $dest $rel
-    # Already gone: nothing to clean, and no reason to keep reporting it.
-    if (-not (Test-Path -LiteralPath $target)) { continue }
+    # Already gone -- deleted by hand, or pruned by an earlier run: nothing to clean, and
+    # no reason to keep reporting it. Dropping it here is what stops a pruned entry from
+    # being rediscovered as stale on every later run.
+    if (-not (Test-PathOrLink $target)) { continue }
 
     # Never act outside $dest, whatever the manifest says.
     $full = [System.IO.Path]::GetFullPath($target)

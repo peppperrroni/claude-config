@@ -188,7 +188,13 @@ for entry in ${TRACKED[@]+"${TRACKED[@]}"}; do
   if [ -e "$SRC/$entry" ]; then KEEP+=("$entry"); continue; fi
 
   target="$DEST/$entry"
-  # Already gone: nothing to clean, and no reason to keep reporting it.
+  # Already gone -- deleted by hand, or pruned by an earlier run: nothing to clean, and
+  # no reason to keep reporting it. Dropping it here is what stops a pruned entry from
+  # being rediscovered as stale on every later run.
+  #
+  # -L as well as -e: a pull that deleted a rule leaves a DANGLING symlink in link mode,
+  # and -e follows the link, so it alone answers false and the link would survive prune
+  # forever.
   [ -e "$target" ] || [ -L "$target" ] || continue
 
   STALE+=("$entry")
