@@ -1,0 +1,8 @@
+* text=auto
+
+# setup.sh must check out with LF even on Windows: a CRLF shebang line makes
+# bash fail with "$'\r': command not found".
+*.sh  text eol=lf
+
+# PowerShell is happiest with CRLF on Windows and does not care elsewhere.
+*.ps1 text eol=crlf
