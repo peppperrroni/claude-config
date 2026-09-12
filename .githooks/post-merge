@@ -1,0 +1,32 @@
+#!/bin/sh
+# post-merge: re-install the layer after a pull, so the live ~/.claude matches the tree
+# that just arrived. This is what removes "re-run setup after pulling" from the manual.
+#
+# Wired by setup with `git config core.hooksPath .githooks`, in this repository only.
+#
+# --prune because a pull that deleted a rule must delete its installed copy or dangling
+# link too. In link mode everything else is already current, so the run reports
+# `unchanged` and does nothing -- except for files the pull ADDED, which have no link yet
+# and are exactly what a link-mode install still has to do.
+#
+# Never fails the merge: every path exits 0.
+
+repo="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -n "$repo" ] || exit 0
+
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    # Git for Windows runs hooks under its bundled sh, where $repo is an MSYS path
+    # (/c/Users/...) that powershell.exe cannot open. cygpath translates it; without
+    # cygpath there is nothing sensible to try, so do nothing rather than something odd.
+    command -v cygpath >/dev/null 2>&1 || exit 0
+    command -v powershell >/dev/null 2>&1 || exit 0
+    ps1="$(cygpath -w "$repo/.githooks/post-merge.ps1")"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "$ps1" || true
+    exit 0
+    ;;
+esac
+
+[ -f "$repo/setup.sh" ] || exit 0
+sh "$repo/setup.sh" --prune || true
+exit 0

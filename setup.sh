@@ -257,6 +257,35 @@ Not installed:
 TAIL
 
 # ---------------------------------------------------------------------------
+# git hooks in the source repository, so a pull re-installs itself.
+# ---------------------------------------------------------------------------
+
+HOOKSPATH_SET=0
+if [ -e "$SRC/.git" ] && command -v git >/dev/null 2>&1; then
+  current="$(git -C "$SRC" config --get core.hooksPath 2>/dev/null || true)"
+  if [ "$current" != ".githooks" ]; then
+    git -C "$SRC" config core.hooksPath .githooks 2>/dev/null || true
+    current="$(git -C "$SRC" config --get core.hooksPath 2>/dev/null || true)"
+  fi
+  [ "$current" = ".githooks" ] && HOOKSPATH_SET=1
+fi
+
+printf '\n'
+if [ "$HOOKSPATH_SET" = "1" ]; then
+  cat <<'HOOKPATH'
+git config core.hooksPath = .githooks  (set in the source repository)
+  A pull now re-runs this installer with --prune, so the live config follows the
+  tree without a second command. It also means .git/hooks is bypassed in this
+  repository -- nothing of mine lives there, but that is the trade.
+HOOKPATH
+else
+  cat <<'NOHOOKPATH'
+git config core.hooksPath was NOT set (source is not a git repository, or git
+  is unavailable). Re-run setup after every pull; see README section 4.
+NOHOOKPATH
+fi
+
+# ---------------------------------------------------------------------------
 # The one block to paste. Built here rather than documented in the README because
 # it carries absolute paths, which are a fact about this machine.
 # ---------------------------------------------------------------------------

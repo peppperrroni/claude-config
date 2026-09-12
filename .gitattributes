@@ -4,6 +4,10 @@
 # bash fail with "$'\r': command not found".
 *.sh  text eol=lf
 
+# The git hook is a shell script with no extension, so *.sh does not reach it, and it is
+# executed by Git for Windows' own sh on exactly the platform that would give it CRLF.
+.githooks/post-merge text eol=lf
+
 # PowerShell is happiest with CRLF on Windows and does not care elsewhere.
 *.ps1 text eol=crlf
 

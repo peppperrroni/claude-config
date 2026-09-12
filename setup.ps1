@@ -287,6 +287,33 @@ Write-Output '  rules/README.txt   documentation, not a rule -- a .md file there
 Write-Output '  templates/         copied into a project by /init-project; see README'
 
 # ---------------------------------------------------------------------------
+# git hooks in the source repository, so a pull re-installs itself.
+# ---------------------------------------------------------------------------
+
+$hooksPathSet = $false
+try {
+    if (Test-Path -LiteralPath (Join-Path $src '.git')) {
+        $current = (& git -C $src config --get core.hooksPath 2>$null | Select-Object -First 1)
+        if ($current -ne '.githooks') {
+            & git -C $src config core.hooksPath .githooks 2>$null | Out-Null
+            $current = (& git -C $src config --get core.hooksPath 2>$null | Select-Object -First 1)
+        }
+        $hooksPathSet = ($current -eq '.githooks')
+    }
+} catch { }
+
+Write-Output ''
+if ($hooksPathSet) {
+    Write-Output 'git config core.hooksPath = .githooks  (set in the source repository)'
+    Write-Output '  A pull now re-runs this installer with -Prune, so the live config follows the'
+    Write-Output '  tree without a second command. It also means .git/hooks is bypassed in this'
+    Write-Output '  repository -- nothing of mine lives there, but that is the trade.'
+} else {
+    Write-Output 'git config core.hooksPath was NOT set (source is not a git repository, or git'
+    Write-Output '  is unavailable). Re-run setup after every pull; see README section 4.'
+}
+
+# ---------------------------------------------------------------------------
 # The one block to paste. Built here rather than documented in the README because
 # it carries absolute paths, which are a fact about this machine.
 # ---------------------------------------------------------------------------
