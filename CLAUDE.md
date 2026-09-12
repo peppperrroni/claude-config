@@ -22,6 +22,28 @@ document describing behaviour that no longer exists.
 Record only what cannot be recovered by reading the repository: the decision and why it
 went that way, what was tried, what was rejected. Not what the code does.
 
+## Context hygiene
+
+Context is a budget, not a scratchpad. Everything in it is re-read on every turn, and a
+fact that arrived two hundred messages ago competes with the instruction that arrived
+last.
+
+**One session, one task.** `/handoff` and then `/clear` between tasks. Carrying a
+finished task into the next one keeps its dead ends in play, and they get argued with
+again.
+
+**Exploration goes to a subagent.** Grepping the repository, reading logs, "understand
+module X" — dispatch it and keep the conclusion, not the file dumps. The main context
+should hold what was decided, not what was looked at on the way.
+
+**Never paste a log or a dump whole.** Read files with Read, in ranges. A file read in
+full because its interesting part had not been located yet costs the same as one read on
+purpose, and buries it.
+
+**`/compact` deliberately, at a milestone** — the plan is agreed, before implementation
+starts — and not in the middle of the work. Compaction mid-task summarises away the
+detail the task is currently made of.
+
 ## Tests
 
 **Reproduce a defect with a failing test first, and prove it fails against the OLD
