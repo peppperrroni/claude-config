@@ -46,6 +46,18 @@ Only if a defect was found or closed.
 
 Show the diff of the documents. Do not commit.
 
+## 7. Record that this ran
+
+    # Windows
+    powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\.claude\hooks\handoff-done.ps1"
+
+    # macOS / Linux
+    bash ~/.claude/hooks/handoff-done.sh
+
+That stamps a marker the Stop hook reads, so it stops reminding that the tree is dirty
+and handoff has not run. Skip it silently if the file is not there — the hooks are
+optional and a missing one is not an error.
+
 ## Two rules that override the steps above
 
 **Describe no code and no structure.** Record only what cannot be recovered by reading

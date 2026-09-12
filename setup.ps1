@@ -30,14 +30,16 @@ function Add-Note([string]$Text) { [void]$report.Add($Text) }
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $dest 'rules')  | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $dest 'skills') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $dest 'hooks')  | Out-Null
 
 $dest = (Get-Item -LiteralPath $dest -Force).FullName
 $manifestPath = Join-Path $dest '.claude-config-manifest'
+$sourceFile   = Join-Path $dest '.claude-config-source'
 
 # Paths that prune must refuse even if a hand-edited manifest names them. Nothing
 # here is ever installed, so a manifest entry naming one is corruption, not a record.
 $protected = @('settings.json', 'settings.local.json', '.credentials.json',
-               '.claude-config-manifest')
+               '.claude-config-manifest', '.claude-config-source')
 
 # Find out once whether this account may create symlinks, rather than discovering
 # it separately for every path and reporting a mix.
@@ -204,6 +206,17 @@ Get-ChildItem -LiteralPath (Join-Path $src 'skills') -Directory | ForEach-Object
     Install-Entry ('skills/' + $_.Name)
 }
 
+# Hooks. Both platforms' scripts are installed on both platforms: they are small, and a
+# machine that installs only its own half cannot be diagnosed by running the other one.
+Get-ChildItem -LiteralPath (Join-Path $src 'hooks') -File | ForEach-Object {
+    Install-Entry ('hooks/' + $_.Name)
+}
+
+# Where the hooks find the repository to pull. Written rather than compiled in, because
+# the clone lives wherever it was cloned and this script is the only thing that knows.
+[System.IO.File]::WriteAllText($sourceFile, $src + "`n",
+    (New-Object System.Text.UTF8Encoding($false)))
+
 # ---------------------------------------------------------------------------
 # Stale entries. The manifest is the union of what was installed before and what
 # was installed just now: rewriting it with only the current set would erase the
@@ -271,11 +284,55 @@ if ($stale.Count -gt 0 -and -not $Prune) {
 Write-Output ''
 Write-Output 'Not installed:'
 Write-Output '  rules/README.txt   documentation, not a rule -- a .md file there would load as one'
-Write-Output '  templates/         copied into a new project by hand; see README'
+Write-Output '  templates/         copied into a project by /init-project; see README'
+
+# ---------------------------------------------------------------------------
+# The one block to paste. Built here rather than documented in the README because
+# it carries absolute paths, which are a fact about this machine.
+# ---------------------------------------------------------------------------
+
+$ssCmd   = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' +
+           (Join-Path $dest 'hooks\session-start.ps1') + '"'
+$stopCmd = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' +
+           (Join-Path $dest 'hooks\stop.ps1') + '"'
+
+# ConvertTo-Json on the two strings alone, not on the whole object: it escapes the
+# backslashes correctly, and Windows PowerShell 5.1's whole-object indentation aligns
+# every value under the widest key, which nobody can read or diff.
+$ssJson   = $ssCmd   | ConvertTo-Json
+$stopJson = $stopCmd | ConvertTo-Json
+
 Write-Output ''
 Write-Output 'settings.json was not touched, and this script will never touch it: it holds live'
 Write-Output 'state -- enabled plugins, MCP servers, permission grants -- that a script has no'
-Write-Output 'business merging. Add by hand if wanted, in ~/.claude/settings.json:'
+Write-Output 'business merging. Paste this into ~/.claude/settings.json by hand, merging the'
+Write-Output '"hooks" key if the file already has one:'
+Write-Output ''
+Write-Output '  {'
+Write-Output '    "hooks": {'
+Write-Output '      "SessionStart": ['
+Write-Output '        {'
+Write-Output '          "hooks": ['
+Write-Output ('            { "type": "command", "command": ' + $ssJson + ' }')
+Write-Output '          ]'
+Write-Output '        }'
+Write-Output '      ],'
+Write-Output '      "Stop": ['
+Write-Output '        {'
+Write-Output '          "hooks": ['
+Write-Output ('            { "type": "command", "command": ' + $stopJson + ' }')
+Write-Output '          ]'
+Write-Output '        }'
+Write-Output '      ]'
+Write-Output '    }'
+Write-Output '  }'
+Write-Output ''
+Write-Output 'SessionStart pulls this repository in the background and shows the project'
+Write-Output 'STATE.md. Stop reminds, once per session, that the tree is dirty and /handoff'
+Write-Output 'has not run. Wire both or neither: the Stop reminder stays silent unless'
+Write-Output 'SessionStart has stamped the session.'
+Write-Output ''
+Write-Output 'Worth having in the same file, unrelated to hooks:'
 Write-Output ''
 Write-Output '  "tui": "fullscreen",'
 Write-Output '  "autoUpdatesChannel": "latest"'

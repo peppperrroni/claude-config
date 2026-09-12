@@ -37,9 +37,10 @@ done
 
 note() { REPORT+=("$1"); }
 
-mkdir -p "$DEST" "$DEST/rules" "$DEST/skills"
+mkdir -p "$DEST" "$DEST/rules" "$DEST/skills" "$DEST/hooks"
 DEST="$(cd "$DEST" && pwd)"
 MANIFEST="$DEST/.claude-config-manifest"
+SOURCE_FILE="$DEST/.claude-config-source"
 
 # Some filesystems accept `ln -s` and silently produce a copy -- Git Bash on
 # Windows does exactly that unless MSYS=winsymlinks:nativestrict is set. Find out
@@ -115,7 +116,7 @@ safe_entry() {  # <entry>
   case "$e" in
     /*|\\*|[A-Za-z]:*)                                            return 1 ;;
     settings.json|settings.local.json|.credentials.json)           return 1 ;;
-    .claude-config-manifest)                                       return 1 ;;
+    .claude-config-manifest|.claude-config-source)                 return 1 ;;
   esac
   case "/$e/" in
     */../*) return 1 ;;
@@ -166,6 +167,17 @@ for d in "$SRC"/skills/*/; do
   [ -d "$d" ] || continue
   install_entry "skills/$(basename "${d%/}")"
 done
+
+# Hooks. Both platforms' scripts are installed on both platforms: they are small, and a
+# machine that installs only its own half cannot be diagnosed by running the other one.
+for f in "$SRC"/hooks/*; do
+  [ -f "$f" ] || continue
+  install_entry "hooks/$(basename "$f")"
+done
+
+# Where the hooks find the repository to pull. Written rather than compiled in, because
+# the clone lives wherever it was cloned and this script is the only thing that knows.
+printf '%s\n' "$SRC" > "$SOURCE_FILE"
 
 # ---------------------------------------------------------------------------
 # Stale entries. The manifest is the union of what was installed before and what
@@ -241,12 +253,60 @@ cat <<'TAIL'
 
 Not installed:
   rules/README.txt   documentation, not a rule -- a .md file there would load as one
-  templates/         copied into a new project by hand; see README
+  templates/         copied into a project by /init-project; see README
+TAIL
+
+# ---------------------------------------------------------------------------
+# The one block to paste. Built here rather than documented in the README because
+# it carries absolute paths, which are a fact about this machine.
+# ---------------------------------------------------------------------------
+
+json_escape() {  # <string>
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+ss_cmd="$(json_escape "bash \"$DEST/hooks/session-start.sh\"")"
+stop_cmd="$(json_escape "bash \"$DEST/hooks/stop.sh\"")"
+
+cat <<'PRELUDE'
 
 settings.json was not touched, and this script will never touch it: it holds live
 state -- enabled plugins, MCP servers, permission grants -- that a script has no
-business merging. Add by hand if wanted, in ~/.claude/settings.json:
+business merging. Paste this into ~/.claude/settings.json by hand, merging the
+"hooks" key if the file already has one:
+
+PRELUDE
+
+cat <<JSONBLOCK
+  {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            { "type": "command", "command": "$ss_cmd" }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            { "type": "command", "command": "$stop_cmd" }
+          ]
+        }
+      ]
+    }
+  }
+JSONBLOCK
+
+cat <<'TAIL2'
+
+SessionStart pulls this repository in the background and shows the project
+STATE.md. Stop reminds, once per session, that the tree is dirty and /handoff
+has not run. Wire both or neither: the Stop reminder stays silent unless
+SessionStart has stamped the session.
+
+Worth having in the same file, unrelated to hooks:
 
   "tui": "fullscreen",
   "autoUpdatesChannel": "latest"
-TAIL
+TAIL2
